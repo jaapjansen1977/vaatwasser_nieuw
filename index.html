@@ -18,7 +18,7 @@
 <body>
 
 <div id="panel">
-  <div><strong>Vaatwasser VR</strong> <span id="version">dev v10</span></div>
+  <div><strong>Vaatwasser VR</strong> <span id="version">dev v10.1</span></div>
   <div id="status">Start VR. Daarna: schouder kalibreren.</div>
   <div id="detail">Nog geen schouderpunt opgeslagen.</div>
   <button id="saveButton" disabled>CSV opslaan</button>
@@ -82,6 +82,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
   const detail = document.querySelector('#detail');
   const hud = document.querySelector('#hud');
   const saveButton = document.querySelector('#saveButton');
+  const camera = document.querySelector('#camera');
 
   const dishwasherBody = document.querySelector('#dishwasherBody');
   const dishwasherDoor = document.querySelector('#dishwasherDoor');
@@ -95,8 +96,11 @@ AFRAME.registerComponent('dishwasher-runtime', {
   let upperArmMesh = null;
   let elbowMesh = null;
   let foreArmMesh = null;
+  let wristMesh = null;
   let palmMesh = null;
   let thumbMesh = null;
+  const fingerMeshes = [];
+  let smoothedElbow = null;
 
   const cfg = {
     duration: 120,
@@ -122,11 +126,12 @@ AFRAME.registerComponent('dishwasher-runtime', {
     shelfYAbove: 0.30,
     shelfZHalfDepth: 0.38,
 
-    // Anatomische arm v10. Eerste testwaarden in meter.
-    upperArmLength: 0.31,
-    foreArmLength: 0.27,
-    handLength: 0.16,
-    elbowPreference: { x: 0.35, y: -0.85, z: 0.15 }
+    // Anatomische arm v10.1. Globale volwassen startwaarden in meter.
+    // De arm wordt niet gebruikt als meetinstrument; alleen voor de VR-weergave.
+    upperArmLength: 0.34,
+    foreArmLength: 0.31,
+    handLength: 0.17,
+    elbowSmoothing: 0.22
   };
 
   let phase = 'CALIBRATE_SHOULDER';
@@ -142,16 +147,17 @@ AFRAME.registerComponent('dishwasher-runtime', {
 
   const data = [];
   const controllerWorld = new THREE.Vector3();
+  const controllerQuat = new THREE.Quaternion();
   const pickupWorld = new THREE.Vector3();
   const placeWorld = new THREE.Vector3();
   const shelfWorld = new THREE.Vector3();
 
-  function inShelfPlacementZone(controller) {
+  function inShelfPlacementZone(controller, visualY) {
     scene.object3D.updateMatrixWorld(true);
     shelf.object3D.getWorldPosition(shelfWorld);
 
     const dx = controller.x - shelfWorld.x;
-    const dy = controller.y - shelfWorld.y;
+    const dy = visualY - shelfWorld.y;
     const dz = controller.z - shelfWorld.z;
 
     const inside =
@@ -188,10 +194,16 @@ AFRAME.registerComponent('dishwasher-runtime', {
       return null;
     }
 
+    rightController.object3D.getWorldQuaternion(controllerQuat);
+
     return {
       x: controllerWorld.x,
       y: controllerWorld.y,
-      z: controllerWorld.z
+      z: controllerWorld.z,
+      qx: controllerQuat.x,
+      qy: controllerQuat.y,
+      qz: controllerQuat.z,
+      qw: controllerQuat.w
     };
   }
 
@@ -213,51 +225,74 @@ AFRAME.registerComponent('dishwasher-runtime', {
   function initVirtualArmMeshes() {
     if (shoulderMesh) return;
 
+    const skin = makeAlwaysVisibleMaterial(0xd89b73);
+    const skinLight = makeAlwaysVisibleMaterial(0xe2aa82);
+    const joint = makeAlwaysVisibleMaterial(0xc98a64);
+
     shoulderMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.06, 18, 14),
-      makeAlwaysVisibleMaterial(0xb87956)
+      new THREE.SphereGeometry(0.065, 22, 16),
+      joint
     );
     shoulderMesh.renderOrder = 999;
     shoulderMesh.visible = false;
     scene.object3D.add(shoulderMesh);
 
+    // Bovenarm en onderarm zijn licht taps toelopend.
     upperArmMesh = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.055, 0.065, 1.0, 18),
-      makeAlwaysVisibleMaterial(0xd79a73)
+      new THREE.CylinderGeometry(0.050, 0.068, 1.0, 20),
+      skin
     );
     upperArmMesh.renderOrder = 999;
     upperArmMesh.visible = false;
     scene.object3D.add(upperArmMesh);
 
     elbowMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.052, 18, 14),
-      makeAlwaysVisibleMaterial(0xc98a64)
+      new THREE.SphereGeometry(0.055, 20, 16),
+      joint
     );
     elbowMesh.renderOrder = 999;
     elbowMesh.visible = false;
     scene.object3D.add(elbowMesh);
 
     foreArmMesh = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.045, 0.055, 1.0, 18),
-      makeAlwaysVisibleMaterial(0xdea47b)
+      new THREE.CylinderGeometry(0.040, 0.055, 1.0, 20),
+      skinLight
     );
     foreArmMesh.renderOrder = 999;
     foreArmMesh.visible = false;
     scene.object3D.add(foreArmMesh);
 
-    // Afgeplatte palm in plaats van een bol.
+    wristMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.042, 18, 14),
+      skinLight
+    );
+    wristMesh.renderOrder = 999;
+    wristMesh.visible = false;
+    scene.object3D.add(wristMesh);
+
+    // Palm: afgeplat en langer dan breed.
     palmMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.095, 0.035, cfg.handLength),
-      makeAlwaysVisibleMaterial(0xe2aa82)
+      new THREE.BoxGeometry(0.095, 0.038, 0.105),
+      skinLight
     );
     palmMesh.renderOrder = 999;
     palmMesh.visible = false;
     scene.object3D.add(palmMesh);
 
-    // Eenvoudige duim, zodat de hand herkenbaar is als rechterhand.
+    // Vier eenvoudige vingers.
+    const fingerGeo = new THREE.CapsuleGeometry(0.012, 0.075, 5, 10);
+    for (let i = 0; i < 4; i++) {
+      const finger = new THREE.Mesh(fingerGeo, skinLight);
+      finger.renderOrder = 999;
+      finger.visible = false;
+      scene.object3D.add(finger);
+      fingerMeshes.push(finger);
+    }
+
+    // Rechterduim.
     thumbMesh = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.018, 0.055, 5, 10),
-      makeAlwaysVisibleMaterial(0xe2aa82)
+      new THREE.CapsuleGeometry(0.014, 0.060, 5, 10),
+      skinLight
     );
     thumbMesh.renderOrder = 999;
     thumbMesh.visible = false;
@@ -272,8 +307,9 @@ AFRAME.registerComponent('dishwasher-runtime', {
       return;
     }
 
-    const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
-    mesh.position.copy(mid);
+    mesh.position.copy(
+      new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5)
+    );
     mesh.quaternion.setFromUnitVectors(
       new THREE.Vector3(0, 1, 0),
       dir.clone().normalize()
@@ -282,23 +318,56 @@ AFRAME.registerComponent('dishwasher-runtime', {
     mesh.visible = true;
   }
 
+  function getElbowPoleDirection(shoulderToHandDir) {
+    // Maak de elleboogvoorkeur deelnemer-relatief in plaats van wereld-relatief.
+    // Rechts = buitenwaarts voor de rechterarm; beneden = natuurlijke zwaarte-richting;
+    // een klein beetje voorwaarts voorkomt een volledig vlakke arm.
+    const camQuat = new THREE.Quaternion();
+    camera.object3D.getWorldQuaternion(camQuat);
+
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camQuat);
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat);
+    const down = new THREE.Vector3(0, -1, 0);
+
+    let pole = right.multiplyScalar(0.48)
+      .add(down.multiplyScalar(0.78))
+      .add(forward.multiplyScalar(0.16));
+
+    // Alleen het deel loodrecht op de schouder-handlijn mag de elleboogpositie bepalen.
+    pole.sub(
+      shoulderToHandDir.clone().multiplyScalar(
+        pole.dot(shoulderToHandDir)
+      )
+    );
+
+    if (pole.lengthSq() < 0.0001) {
+      pole = new THREE.Vector3(1, -1, 0);
+      pole.sub(
+        shoulderToHandDir.clone().multiplyScalar(
+          pole.dot(shoulderToHandDir)
+        )
+      );
+    }
+
+    return pole.normalize();
+  }
+
   function solveElbow(shoulderPos, handPos) {
     const L1 = cfg.upperArmLength;
     const L2 = cfg.foreArmLength;
 
     const toHand = new THREE.Vector3().subVectors(handPos, shoulderPos);
-    let d = toHand.length();
+    const rawD = toHand.length();
 
-    if (d < 0.02) {
+    if (rawD < 0.02) {
       return shoulderPos.clone().add(new THREE.Vector3(0.05, -L1, 0));
     }
 
     const dir = toHand.clone().normalize();
 
-    // Houd de wiskunde binnen het bereik van een 2-link arm.
     const minD = Math.abs(L1 - L2) + 0.005;
     const maxD = L1 + L2 - 0.005;
-    d = THREE.MathUtils.clamp(d, minD, maxD);
+    const d = THREE.MathUtils.clamp(rawD, minD, maxD);
 
     const along =
       (L1 * L1 - L2 * L2 + d * d) /
@@ -308,27 +377,76 @@ AFRAME.registerComponent('dishwasher-runtime', {
       Math.max(0, L1 * L1 - along * along)
     );
 
-    // Voorkeursrichting voor de rechterelleboog:
-    // vooral naar beneden, iets naar buiten en iets naar voren.
-    let pole = new THREE.Vector3(
-      cfg.elbowPreference.x,
-      cfg.elbowPreference.y,
-      cfg.elbowPreference.z
-    );
+    const pole = getElbowPoleDirection(dir);
 
-    // Maak pole loodrecht op schouder-hand-richting.
-    pole.sub(dir.clone().multiplyScalar(pole.dot(dir)));
-
-    if (pole.lengthSq() < 0.0001) {
-      pole = new THREE.Vector3(1, -1, 0);
-      pole.sub(dir.clone().multiplyScalar(pole.dot(dir)));
-    }
-
-    pole.normalize();
-
-    return shoulderPos.clone()
+    const solved = shoulderPos.clone()
       .add(dir.clone().multiplyScalar(along))
       .add(pole.multiplyScalar(perpendicular));
+
+    // Dempt snelle omslagen van de IK-oplossing.
+    if (!smoothedElbow) {
+      smoothedElbow = solved.clone();
+    } else {
+      smoothedElbow.lerp(solved, cfg.elbowSmoothing);
+    }
+
+    return smoothedElbow.clone();
+  }
+
+  function orientHand(hand, wristPos, foreDir) {
+    const handQuat = new THREE.Quaternion(
+      hand.qx || 0,
+      hand.qy || 0,
+      hand.qz || 0,
+      Number.isFinite(hand.qw) ? hand.qw : 1
+    );
+
+    // Gebruik echte controlleroriëntatie voor pronatie/supinatie en handrichting.
+    palmMesh.position.copy(wristPos).add(
+      foreDir.clone().multiplyScalar(0.050)
+    );
+    palmMesh.quaternion.copy(handQuat);
+    palmMesh.visible = true;
+
+    wristMesh.position.copy(wristPos);
+    wristMesh.visible = true;
+
+    // Lokale assen van de hand.
+    const localRight = new THREE.Vector3(1, 0, 0).applyQuaternion(handQuat);
+    const localForward = new THREE.Vector3(0, 0, -1).applyQuaternion(handQuat);
+    const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(handQuat);
+
+    const fingerOffsets = [-0.030, -0.010, 0.010, 0.030];
+
+    fingerMeshes.forEach((finger, i) => {
+      finger.position.copy(palmMesh.position)
+        .add(localRight.clone().multiplyScalar(fingerOffsets[i]))
+        .add(localForward.clone().multiplyScalar(0.090))
+        .add(localUp.clone().multiplyScalar(-0.005));
+
+      // Capsule staat standaard langs Y; draai hem naar lokale voorwaartse handrichting.
+      finger.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0),
+        localForward.clone().normalize()
+      );
+      finger.visible = true;
+    });
+
+    thumbMesh.position.copy(palmMesh.position)
+      .add(localRight.clone().multiplyScalar(0.065))
+      .add(localForward.clone().multiplyScalar(0.020))
+      .add(localUp.clone().multiplyScalar(-0.015));
+
+    const thumbDir = localForward.clone()
+      .multiplyScalar(0.55)
+      .add(localRight.clone().multiplyScalar(0.85))
+      .normalize();
+
+    thumbMesh.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      thumbDir
+    );
+    thumbMesh.visible = true;
   }
 
   function updateVirtualArm(hand) {
@@ -338,49 +456,21 @@ AFRAME.registerComponent('dishwasher-runtime', {
     const s = new THREE.Vector3(shoulder.x, shoulder.y, shoulder.z);
     const h = new THREE.Vector3(hand.x, hand.y, hand.z);
 
-    // De virtuele hand mag verder liggen dan de gekozen armlengte.
-    // Voor de armgeometrie projecteren we hem zo nodig terug naar maximaal bereik,
-    // maar de taak/controllerlogica blijft ongewijzigd.
-    const sh = new THREE.Vector3().subVectors(h, s);
-    const maxReach = cfg.upperArmLength + cfg.foreArmLength - 0.005;
-    const wrist = sh.length() > maxReach
-      ? s.clone().add(sh.clone().normalize().multiplyScalar(maxReach))
-      : h.clone();
-
-    const elbow = solveElbow(s, wrist);
+    const elbow = solveElbow(s, h);
 
     shoulderMesh.position.copy(s);
     elbowMesh.position.copy(elbow);
-
     shoulderMesh.visible = true;
     elbowMesh.visible = true;
 
     setSegmentBetween(upperArmMesh, s, elbow);
-    setSegmentBetween(foreArmMesh, elbow, wrist);
+    setSegmentBetween(foreArmMesh, elbow, h);
 
-    // Oriënteer de palm in de richting van de onderarm.
-    const foreDir = new THREE.Vector3().subVectors(wrist, elbow).normalize();
-    palmMesh.position.copy(wrist).add(
-      foreDir.clone().multiplyScalar(cfg.handLength * 0.35)
-    );
+    const foreDir = new THREE.Vector3()
+      .subVectors(h, elbow)
+      .normalize();
 
-    palmMesh.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 0, -1),
-      foreDir.clone()
-    );
-    palmMesh.visible = true;
-
-    // Duim aan de rechterzijde van de palm.
-    const side = new THREE.Vector3(1, 0, 0)
-      .applyQuaternion(palmMesh.quaternion);
-
-    thumbMesh.position.copy(palmMesh.position)
-      .add(side.clone().multiplyScalar(0.065))
-      .add(foreDir.clone().multiplyScalar(-0.015));
-
-    thumbMesh.quaternion.copy(palmMesh.quaternion);
-    thumbMesh.rotateZ(-0.75);
-    thumbMesh.visible = true;
+    orientHand(hand, h, foreDir);
   }
 
   function log(event, controller, visualY, gain) {
@@ -397,7 +487,8 @@ AFRAME.registerComponent('dishwasher-runtime', {
       controller_y: controller ? controller.y : '',
       controller_z: controller ? controller.z : '',
       visual_y: visualY,
-      arm_model: '2-link-IK'
+      arm_model: '2-link-IK-v10.1',
+      placement_y_basis: 'visual_y'
     });
   }
 
@@ -469,8 +560,9 @@ AFRAME.registerComponent('dishwasher-runtime', {
 
     setHud(
       'Schouder opgeslagen.\n' +
-      'Breng de hand naar een comfortabele startpositie\n' +
-      'en druk opnieuw op trigger.'
+      'Breng de hand laag voor het lichaam:\n' +
+      'elleboog ongeveer 90 graden, hand rond navel/bekkenhoogte.\n' +
+      'Druk daarna opnieuw op trigger.'
     );
   }
 
@@ -572,17 +664,17 @@ AFRAME.registerComponent('dishwasher-runtime', {
           );
         }
       } else if (carrying) {
-        const zone = inShelfPlacementZone(c);
+        const zone = inShelfPlacementZone(c, visualY);
 
         if (zone.inside) {
           place(c, visualY, gain);
         } else {
           setHud(
-            'Nog niet boven de plank.\n' +
+            'Virtuele hand nog niet bij de plank.\n' +
             'dX ' + Math.round(zone.dx * 100) + ' cm  ' +
-            'dY ' + Math.round(zone.dy * 100) + ' cm  ' +
+            'VR dY ' + Math.round(zone.dy * 100) + ' cm  ' +
             'dZ ' + Math.round(zone.dz * 100) + ' cm\n' +
-            'Breng je hand boven de plank en druk opnieuw.'
+            'Hef je arm verder tot de virtuele hand de plank bereikt.'
           );
         }
       }
@@ -649,7 +741,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const visualDelta = visualHand.y - startHand.y;
 
       detail.textContent =
-        'v10 | t=' + elapsed.toFixed(1) +
+        'v10.1 | t=' + elapsed.toFixed(1) +
         ' | gain=' + gain.toFixed(2) +
         ' | real ΔY=' + realDelta.toFixed(3) +
         ' | vis ΔY=' + visualDelta.toFixed(3);
@@ -667,7 +759,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const realDelta = c.y - startHand.y;
       const visualDelta = visualHand.y - startHand.y;
       setHud(
-        'v10  Gain ' + gain.toFixed(2) + '\n' +
+        'v10.1  Gain ' + gain.toFixed(2) + '\n' +
         'Real dY ' + realDelta.toFixed(2) + ' m   Visual dY ' + visualDelta.toFixed(2) + ' m\n' +
         (carrying ? 'Trigger = bord loslaten' : 'Trigger = bord pakken')
       );
