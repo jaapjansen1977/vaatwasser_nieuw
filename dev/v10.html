@@ -18,7 +18,7 @@
 <body>
 
 <div id="panel">
-  <div><strong>Vaatwasser VR</strong> <span id="version">dev v10.1</span></div>
+  <div><strong>Vaatwasser VR</strong> <span id="version">dev v10.2</span></div>
   <div id="status">Start VR. Daarna: schouder kalibreren.</div>
   <div id="detail">Nog geen schouderpunt opgeslagen.</div>
   <button id="saveButton" disabled>CSV opslaan</button>
@@ -100,7 +100,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
   let palmMesh = null;
   let thumbMesh = null;
   const fingerMeshes = [];
-  let smoothedElbow = null;
+  let smoothedPole = null;
 
   const cfg = {
     duration: 120,
@@ -131,7 +131,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
     upperArmLength: 0.34,
     foreArmLength: 0.31,
     handLength: 0.17,
-    elbowSmoothing: 0.22
+    elbowSmoothing: 0.30
   };
 
   let phase = 'CALIBRATE_SHOULDER';
@@ -272,7 +272,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
 
     // Palm: afgeplat en langer dan breed.
     palmMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.095, 0.038, 0.105),
+      new THREE.BoxGeometry(0.105, 0.040, 0.120),
       skinLight
     );
     palmMesh.renderOrder = 999;
@@ -379,18 +379,17 @@ AFRAME.registerComponent('dishwasher-runtime', {
 
     const pole = getElbowPoleDirection(dir);
 
-    const solved = shoulderPos.clone()
-      .add(dir.clone().multiplyScalar(along))
-      .add(pole.multiplyScalar(perpendicular));
-
-    // Dempt snelle omslagen van de IK-oplossing.
-    if (!smoothedElbow) {
-      smoothedElbow = solved.clone();
+    // Smooth alleen de BUIGRICHTING van de elleboog.
+    // Daardoor blijven bovenarm- en onderarmlengte anatomisch exact behouden.
+    if (!smoothedPole) {
+      smoothedPole = pole.clone();
     } else {
-      smoothedElbow.lerp(solved, cfg.elbowSmoothing);
+      smoothedPole.lerp(pole, cfg.elbowSmoothing).normalize();
     }
 
-    return smoothedElbow.clone();
+    return shoulderPos.clone()
+      .add(dir.clone().multiplyScalar(along))
+      .add(smoothedPole.clone().multiplyScalar(perpendicular));
   }
 
   function orientHand(hand, wristPos, foreDir) {
@@ -487,7 +486,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       controller_y: controller ? controller.y : '',
       controller_z: controller ? controller.z : '',
       visual_y: visualY,
-      arm_model: '2-link-IK-v10.1',
+      arm_model: '2-link-IK-v10.2',
       placement_y_basis: 'visual_y'
     });
   }
@@ -699,7 +698,10 @@ AFRAME.registerComponent('dishwasher-runtime', {
     const c = getController();
     if (!c || !shoulder) return;
 
-    let visualHand = {x:c.x, y:c.y, z:c.z};
+    let visualHand = {
+      x: c.x, y: c.y, z: c.z,
+      qx: c.qx, qy: c.qy, qz: c.qz, qw: c.qw
+    };
     let gain = 1.00;
     let elapsed = 0;
 
@@ -741,7 +743,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const visualDelta = visualHand.y - startHand.y;
 
       detail.textContent =
-        'v10.1 | t=' + elapsed.toFixed(1) +
+        'v10.2 | t=' + elapsed.toFixed(1) +
         ' | gain=' + gain.toFixed(2) +
         ' | real ΔY=' + realDelta.toFixed(3) +
         ' | vis ΔY=' + visualDelta.toFixed(3);
@@ -759,7 +761,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const realDelta = c.y - startHand.y;
       const visualDelta = visualHand.y - startHand.y;
       setHud(
-        'v10.1  Gain ' + gain.toFixed(2) + '\n' +
+        'v10.2  Gain ' + gain.toFixed(2) + '\n' +
         'Real dY ' + realDelta.toFixed(2) + ' m   Visual dY ' + visualDelta.toFixed(2) + ' m\n' +
         (carrying ? 'Trigger = bord loslaten' : 'Trigger = bord pakken')
       );
