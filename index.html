@@ -18,7 +18,7 @@
 <body>
 
 <div id="panel">
-  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v8</span></div>
+  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v9</span></div>
   <div id="status">Start VR. Daarna: schouder kalibreren.</div>
   <div id="detail">Nog geen schouderpunt opgeslagen.</div>
   <button id="saveButton" disabled>CSV opslaan</button>
@@ -32,8 +32,8 @@
   <a-plane position="0 0 -2.5" rotation="-90 0 0" width="7" height="7" color="#b9b5ad"></a-plane>
 
   <!-- vaatwasser -->
-  <a-box position="0 0.48 -1.55" width="1.25" height="0.9" depth="0.65" color="#6f7b82"></a-box>
-  <a-box position="0 0.18 -1.05" rotation="-65 0 0" width="1.25" height="0.06" depth="0.9" color="#aab3b8"></a-box>
+  <a-box id="dishwasherBody" position="0 0.48 -1.55" width="1.25" height="0.9" depth="0.65" color="#6f7b82"></a-box>
+  <a-box id="dishwasherDoor" position="0 0.18 -1.05" rotation="-65 0 0" width="1.25" height="0.06" depth="0.9" color="#aab3b8"></a-box>
 
   <a-entity id="waitingPlate" position="0 0.58 -1.12">
     <a-cylinder radius="0.18" height="0.03" rotation="90 0 0" color="#fffaf0"></a-cylinder>
@@ -83,6 +83,8 @@ AFRAME.registerComponent('dishwasher-runtime', {
   const hud = document.querySelector('#hud');
   const saveButton = document.querySelector('#saveButton');
 
+  const dishwasherBody = document.querySelector('#dishwasherBody');
+  const dishwasherDoor = document.querySelector('#dishwasherDoor');
   const waitingPlate = document.querySelector('#waitingPlate');
   const carriedPlate = document.querySelector('#carriedPlate');
   const shelf = document.querySelector('#shelf');
@@ -103,6 +105,11 @@ AFRAME.registerComponent('dishwasher-runtime', {
       { until: 120, gain: 0.75 }
     ],
     shelfOffsetFromShoulderY: -0.05,
+
+    // Afstand van de taakobjecten voor de gebruiker.
+    // Minder negatief = dichterbij. -0.85 is ~27 cm dichterbij dan voorheen.
+    taskZ: -0.85,
+
     pickupRadius: 0.20,
 
     // Plaatsen gebeurt niet meer rond één klein punt, maar boven de hele plank.
@@ -300,9 +307,22 @@ AFRAME.registerComponent('dishwasher-runtime', {
     shoulder = {...c};
 
     const shelfY = shoulder.y + cfg.shelfOffsetFromShoulderY;
-    shelf.setAttribute('position', '0 ' + shelfY.toFixed(3) + ' -1.50');
-    placedPlates.setAttribute('position', '0 ' + (shelfY + 0.06).toFixed(3) + ' -1.30');
-    placementTarget.setAttribute('position', '0 ' + (shelfY + 0.10).toFixed(3) + ' -1.30');
+
+    // Zet de hele taak dichter bij de gebruiker.
+    // taskZ is de positie van het bord; overige objecten houden hun relatieve diepte.
+    const plateZ = cfg.taskZ;
+    const doorZ = plateZ + 0.07;
+    const bodyZ = plateZ - 0.43;
+    const shelfZ = plateZ - 0.38;
+    const placedZ = plateZ - 0.18;
+
+    dishwasherBody.setAttribute('position', '0 0.48 ' + bodyZ.toFixed(3));
+    dishwasherDoor.setAttribute('position', '0 0.18 ' + doorZ.toFixed(3));
+    waitingPlate.setAttribute('position', '0 0.58 ' + plateZ.toFixed(3));
+
+    shelf.setAttribute('position', '0 ' + shelfY.toFixed(3) + ' ' + shelfZ.toFixed(3));
+    placedPlates.setAttribute('position', '0 ' + (shelfY + 0.06).toFixed(3) + ' ' + placedZ.toFixed(3));
+    placementTarget.setAttribute('position', '0 ' + (shelfY + 0.10).toFixed(3) + ' ' + placedZ.toFixed(3));
 
     phase = 'WAIT_START';
     initVirtualArmMeshes();
@@ -496,7 +516,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const visualDelta = visualHand.y - startHand.y;
 
       detail.textContent =
-        'v8 | t=' + elapsed.toFixed(1) +
+        'v9 | t=' + elapsed.toFixed(1) +
         ' | gain=' + gain.toFixed(2) +
         ' | real ΔY=' + realDelta.toFixed(3) +
         ' | vis ΔY=' + visualDelta.toFixed(3);
@@ -514,7 +534,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const realDelta = c.y - startHand.y;
       const visualDelta = visualHand.y - startHand.y;
       setHud(
-        'v8  Gain ' + gain.toFixed(2) + '\n' +
+        'v9  Gain ' + gain.toFixed(2) + '\n' +
         'Real dY ' + realDelta.toFixed(2) + ' m   Visual dY ' + visualDelta.toFixed(2) + ' m\n' +
         (carrying ? 'Trigger = bord loslaten' : 'Trigger = bord pakken')
       );
