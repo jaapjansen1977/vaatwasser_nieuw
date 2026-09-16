@@ -18,7 +18,7 @@
 <body>
 
 <div id="panel">
-  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v3</span></div>
+  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v4</span></div>
   <div id="status">Start VR. Daarna: schouder kalibreren.</div>
   <div id="detail">Nog geen schouderpunt opgeslagen.</div>
   <button id="saveButton" disabled>CSV opslaan</button>
@@ -142,21 +142,38 @@
   function initVirtualArmMeshes() {
     if (armMesh) return;
 
-    const shoulderGeo = new THREE.SphereGeometry(0.07, 20, 16);
-    const shoulderMat = new THREE.MeshStandardMaterial({color: 0x8f5f45});
+    const shoulderGeo = new THREE.SphereGeometry(0.075, 20, 16);
+    const shoulderMat = new THREE.MeshBasicMaterial({
+      color: 0x8f5f45,
+      depthTest: false,
+      depthWrite: false
+    });
     shoulderMesh = new THREE.Mesh(shoulderGeo, shoulderMat);
+    shoulderMesh.renderOrder = 999;
     shoulderMesh.visible = false;
     scene.object3D.add(shoulderMesh);
 
-    const armGeo = new THREE.CylinderGeometry(0.065, 0.065, 1.0, 20);
-    const armMat = new THREE.MeshStandardMaterial({color: 0xd79a73});
+    // Arm extra duidelijk en zonder depth-test, zodat hij in Quest altijd
+    // boven de omgeving zichtbaar blijft.
+    const armGeo = new THREE.CylinderGeometry(0.09, 0.09, 1.0, 24);
+    const armMat = new THREE.MeshBasicMaterial({
+      color: 0xff4f3a,
+      depthTest: false,
+      depthWrite: false
+    });
     armMesh = new THREE.Mesh(armGeo, armMat);
+    armMesh.renderOrder = 999;
     armMesh.visible = false;
     scene.object3D.add(armMesh);
 
-    const handGeo = new THREE.SphereGeometry(0.085, 20, 16);
-    const handMat = new THREE.MeshStandardMaterial({color: 0xc88b62});
+    const handGeo = new THREE.SphereGeometry(0.095, 20, 16);
+    const handMat = new THREE.MeshBasicMaterial({
+      color: 0xffd34d,
+      depthTest: false,
+      depthWrite: false
+    });
     handMesh = new THREE.Mesh(handGeo, handMat);
+    handMesh.renderOrder = 999;
     handMesh.visible = false;
     scene.object3D.add(handMesh);
   }
@@ -186,7 +203,11 @@
       new THREE.Vector3(0,1,0),
       dir.clone().normalize()
     );
-    armMesh.scale.set(1, len, 1);
+
+    // Geometry is 1 meter lang; schaal exact naar afstand schouder-hand.
+    armMesh.scale.set(1, Math.max(len, 0.02), 1);
+    armMesh.updateMatrix();
+    armMesh.updateMatrixWorld(true);
     armMesh.visible = true;
   }
 
@@ -372,7 +393,7 @@
         }
 
         detail.textContent =
-          'v3 | t=' + elapsed.toFixed(1) +
+          'v4 | t=' + elapsed.toFixed(1) +
           ' s | gain=' + gain.toFixed(2) +
           ' | borden=' + placedCount;
 
