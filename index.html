@@ -18,7 +18,7 @@
 <body>
 
 <div id="panel">
-  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v2</span></div>
+  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v3</span></div>
   <div id="status">Start VR. Daarna: schouder kalibreren.</div>
   <div id="detail">Nog geen schouderpunt opgeslagen.</div>
   <button id="saveButton" disabled>CSV opslaan</button>
@@ -47,11 +47,8 @@
   <!-- controller -->
   <a-entity id="rightController" laser-controls="hand:right"></a-entity>
 
-  <!-- virtuele arm: eerst bewust simpel en robuust.
-       Eén doorlopende arm van opgeslagen schouderpunt naar visuele hand. -->
-  <a-sphere id="shoulderVisual" radius="0.07" color="#8f5f45" visible="false"></a-sphere>
-  <a-cylinder id="virtualArm" radius="0.065" height="1" color="#d79a73" visible="false"></a-cylinder>
-  <a-sphere id="vrHand" radius="0.085" color="#c88b62" visible="false"></a-sphere>
+  <!-- virtuele arm wordt in v3 rechtstreeks als THREE.js-mesh toegevoegd.
+       Dit omzeilt mogelijke A-Frame visibility/primitive-problemen in Quest WebXR. -->
 
   <!-- gedragen bord -->
   <a-entity id="carriedPlate" visible="false">
@@ -82,9 +79,9 @@
   const shelf = document.querySelector('#shelf');
   const placedPlates = document.querySelector('#placedPlates');
 
-  const shoulderVisual = document.querySelector('#shoulderVisual');
-  const virtualArm = document.querySelector('#virtualArm');
-  const vrHand = document.querySelector('#vrHand');
+  let shoulderMesh = null;
+  let armMesh = null;
+  let handMesh = null;
 
   const cfg = {
     duration: 120,
@@ -142,40 +139,55 @@
     return cfg.gainSchedule[cfg.gainSchedule.length - 1].gain;
   }
 
+  function initVirtualArmMeshes() {
+    if (armMesh) return;
+
+    const shoulderGeo = new THREE.SphereGeometry(0.07, 20, 16);
+    const shoulderMat = new THREE.MeshStandardMaterial({color: 0x8f5f45});
+    shoulderMesh = new THREE.Mesh(shoulderGeo, shoulderMat);
+    shoulderMesh.visible = false;
+    scene.object3D.add(shoulderMesh);
+
+    const armGeo = new THREE.CylinderGeometry(0.065, 0.065, 1.0, 20);
+    const armMat = new THREE.MeshStandardMaterial({color: 0xd79a73});
+    armMesh = new THREE.Mesh(armGeo, armMat);
+    armMesh.visible = false;
+    scene.object3D.add(armMesh);
+
+    const handGeo = new THREE.SphereGeometry(0.085, 20, 16);
+    const handMat = new THREE.MeshStandardMaterial({color: 0xc88b62});
+    handMesh = new THREE.Mesh(handGeo, handMat);
+    handMesh.visible = false;
+    scene.object3D.add(handMesh);
+  }
+
   function updateVirtualArm(hand) {
     if (!shoulder || !hand) return;
+    initVirtualArmMeshes();
 
     const s = new THREE.Vector3(shoulder.x, shoulder.y, shoulder.z);
     const h = new THREE.Vector3(hand.x, hand.y, hand.z);
     const dir = new THREE.Vector3().subVectors(h, s);
     const len = dir.length();
 
+    shoulderMesh.position.copy(s);
+    handMesh.position.copy(h);
+    shoulderMesh.visible = true;
+    handMesh.visible = true;
+
     if (len < 0.02) {
-      virtualArm.setAttribute('visible', false);
-      shoulderVisual.setAttribute('visible', true);
-      vrHand.setAttribute('visible', true);
-      shoulderVisual.object3D.position.copy(s);
-      vrHand.object3D.position.copy(h);
+      armMesh.visible = false;
       return;
     }
 
     const mid = new THREE.Vector3().addVectors(s, h).multiplyScalar(0.5);
-
-    shoulderVisual.object3D.position.copy(s);
-    vrHand.object3D.position.copy(h);
-
-    virtualArm.object3D.position.copy(mid);
-    virtualArm.object3D.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 1, 0),
+    armMesh.position.copy(mid);
+    armMesh.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0,1,0),
       dir.clone().normalize()
     );
-
-    // De cilinder is standaard 1 meter lang. Schaal alleen de lengte-as.
-    virtualArm.object3D.scale.set(1, len, 1);
-
-    shoulderVisual.setAttribute('visible', true);
-    virtualArm.setAttribute('visible', true);
-    vrHand.setAttribute('visible', true);
+    armMesh.scale.set(1, len, 1);
+    armMesh.visible = true;
   }
 
   function log(event, controller, visualY, gain) {
@@ -221,6 +233,9 @@
     placedPlates.setAttribute('position', '0 ' + (shelfY + 0.06).toFixed(3) + ' -1.30');
 
     phase = 'WAIT_START';
+    initVirtualArmMeshes();
+    shoulderMesh.position.set(shoulder.x, shoulder.y, shoulder.z);
+    shoulderMesh.visible = true;
     log('shoulder_calibration', c, '', 1);
 
     detail.textContent =
@@ -317,6 +332,10 @@
     }
   });
 
+  scene.addEventListener('loaded', () => {
+    initVirtualArmMeshes();
+  });
+
   scene.addEventListener('enter-vr', () => {
     setHud(
       'Kalibratie:\n' +
@@ -353,7 +372,7 @@
         }
 
         detail.textContent =
-          'v2 | t=' + elapsed.toFixed(1) +
+          'v3 | t=' + elapsed.toFixed(1) +
           ' s | gain=' + gain.toFixed(2) +
           ' | borden=' + placedCount;
 
