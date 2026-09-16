@@ -18,10 +18,30 @@
 <body>
 
 <div id="panel">
-  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v9.1</span></div>
+  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v9.2</span></div>
   <div id="status">Start VR. Daarna: schouder kalibreren.</div>
   <div id="detail">Nog geen schouderpunt opgeslagen.</div>
   <button id="saveButton" disabled>CSV opslaan</button>
+</div>
+
+<div id="plotPanel" style="
+  display:none;
+  position:fixed;
+  z-index:10000;
+  top:20px;
+  right:20px;
+  width:700px;
+  max-width:90vw;
+  background:rgba(255,255,255,0.96);
+  color:#111;
+  padding:16px;
+  border-radius:12px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.25);
+">
+  <div style="font-weight:bold; margin-bottom:8px;">Experimentresultaat v9.2</div>
+  <div id="plotSummary" style="margin-bottom:10px; font-size:14px;">Samenvatting...</div>
+  <canvas id="resultCanvas" width="640" height="360"
+          style="width:100%; height:auto; border:1px solid #ccc; background:#fff;"></canvas>
 </div>
 
 <a-scene id="scene" dishwasher-runtime background="color:#dfe7eb">
@@ -82,6 +102,9 @@ AFRAME.registerComponent('dishwasher-runtime', {
   const detail = document.querySelector('#detail');
   const hud = document.querySelector('#hud');
   const saveButton = document.querySelector('#saveButton');
+  const plotPanel = document.querySelector('#plotPanel');
+  const plotSummary = document.querySelector('#plotSummary');
+  const resultCanvas = document.querySelector('#resultCanvas');
 
   const dishwasherBody = document.querySelector('#dishwasherBody');
   const dishwasherDoor = document.querySelector('#dishwasherDoor');
@@ -267,6 +290,156 @@ AFRAME.registerComponent('dishwasher-runtime', {
       visual_y: visualY,
       placement_y_basis: 'visual_y'
     });
+  }
+
+  function getFrameSeries() {
+    return data.filter(row =>
+      row.event === 'frame' &&
+      row.controller_y !== '' &&
+      row.visual_y !== ''
+    ).map(row => ({
+      t: Number(row.time),
+      realY: Number(row.controller_y),
+      visualY: Number(row.visual_y)
+    }));
+  }
+
+  function drawResultPlot() {
+    const series = getFrameSeries();
+    if (!series.length) return;
+
+    plotPanel.style.display = 'block';
+
+    const canvas = resultCanvas;
+    const ctx = canvas.getContext('2d');
+
+    const W = canvas.width;
+    const H = canvas.height;
+
+    ctx.clearRect(0, 0, W, H);
+
+    const margin = { left: 60, right: 20, top: 20, bottom: 45 };
+    const plotW = W - margin.left - margin.right;
+    const plotH = H - margin.top - margin.bottom;
+
+    const realVals = series.map(p => p.realY);
+    const visualVals = series.map(p => p.visualY);
+
+    const minT = 0;
+    const maxT = cfg.duration;
+
+    const minY = Math.min(...realVals, ...visualVals);
+    const maxY = Math.max(...realVals, ...visualVals);
+
+    const padY = Math.max(0.05, (maxY - minY) * 0.08);
+    const y0 = minY - padY;
+    const y1 = maxY + padY;
+
+    function xScale(t) {
+      return margin.left + ((t - minT) / (maxT - minT)) * plotW;
+    }
+
+    function yScale(y) {
+      return margin.top + plotH - ((y - y0) / (y1 - y0)) * plotH;
+    }
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = '#e6e6e6';
+    ctx.lineWidth = 1;
+    for (let t = 0; t <= cfg.duration; t += 20) {
+      const x = xScale(t);
+      ctx.beginPath();
+      ctx.moveTo(x, margin.top);
+      ctx.lineTo(x, margin.top + plotH);
+      ctx.stroke();
+
+      ctx.fillStyle = '#444';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(String(t), x, H - 20);
+    }
+
+    const yTicks = 5;
+    for (let i = 0; i <= yTicks; i++) {
+      const frac = i / yTicks;
+      const yVal = y0 + frac * (y1 - y0);
+      const y = yScale(yVal);
+
+      ctx.strokeStyle = '#e6e6e6';
+      ctx.beginPath();
+      ctx.moveTo(margin.left, y);
+      ctx.lineTo(margin.left + plotW, y);
+      ctx.stroke();
+
+      ctx.fillStyle = '#444';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'right';
+      ctx.fillText(yVal.toFixed(2), margin.left - 8, y + 4);
+    }
+
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(margin.left, margin.top);
+    ctx.lineTo(margin.left, margin.top + plotH);
+    ctx.lineTo(margin.left + plotW, margin.top + plotH);
+    ctx.stroke();
+
+    ctx.fillStyle = '#111';
+    ctx.font = '13px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Tijd (s)', margin.left + plotW / 2, H - 5);
+
+    ctx.save();
+    ctx.translate(18, margin.top + plotH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('Hoogte (m)', 0, 0);
+    ctx.restore();
+
+    // Werkelijke hoogte
+    ctx.strokeStyle = '#1f77b4';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    series.forEach((p, i) => {
+      const x = xScale(p.t);
+      const y = yScale(p.realY);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Virtuele hoogte
+    ctx.strokeStyle = '#ff7f0e';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    series.forEach((p, i) => {
+      const x = xScale(p.t);
+      const y = yScale(p.visualY);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Legenda
+    ctx.fillStyle = '#1f77b4';
+    ctx.fillRect(W - 190, 25, 16, 4);
+    ctx.fillStyle = '#111';
+    ctx.textAlign = 'left';
+    ctx.fillText('Werkelijke hoogte', W - 168, 32);
+
+    ctx.fillStyle = '#ff7f0e';
+    ctx.fillRect(W - 190, 48, 16, 4);
+    ctx.fillStyle = '#111';
+    ctx.fillText('Virtuele hoogte', W - 168, 55);
+
+    const maxReal = Math.max(...realVals);
+    const maxVisual = Math.max(...visualVals);
+
+    plotSummary.textContent =
+      'Max werkelijke hoogte: ' + maxReal.toFixed(3) + ' m | ' +
+      'Max virtuele hoogte: ' + maxVisual.toFixed(3) + ' m';
   }
 
   function buildCSV() {
@@ -492,9 +665,11 @@ AFRAME.registerComponent('dishwasher-runtime', {
           saveCSV();
         }
 
+        drawResultPlot();
+
         setHud(
           'Klaar. CSV is automatisch opgeslagen/gedownload.\n' +
-          'Zo niet: verlaat VR en gebruik de knop CSV opslaan.'
+          'Verlaat VR om de grafiek met werkelijke en virtuele hoogte te bekijken.'
         );
         return;
       }
@@ -517,7 +692,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const visualDelta = visualHand.y - startHand.y;
 
       detail.textContent =
-        'v9.1 | t=' + elapsed.toFixed(1) +
+        'v9.2 | t=' + elapsed.toFixed(1) +
         ' | gain=' + gain.toFixed(2) +
         ' | real ΔY=' + realDelta.toFixed(3) +
         ' | vis ΔY=' + visualDelta.toFixed(3);
@@ -535,7 +710,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const realDelta = c.y - startHand.y;
       const visualDelta = visualHand.y - startHand.y;
       setHud(
-        'v9.1  Gain ' + gain.toFixed(2) + '\n' +
+        'v9.2  Gain ' + gain.toFixed(2) + '\n' +
         'Real dY ' + realDelta.toFixed(2) + ' m   Visual dY ' + visualDelta.toFixed(2) + ' m\n' +
         (carrying ? 'Trigger = bord loslaten' : 'Trigger = bord pakken')
       );
