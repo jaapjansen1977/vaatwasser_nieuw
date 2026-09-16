@@ -18,7 +18,7 @@
 <body>
 
 <div id="panel">
-  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v1</span></div>
+  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v2</span></div>
   <div id="status">Start VR. Daarna: schouder kalibreren.</div>
   <div id="detail">Nog geen schouderpunt opgeslagen.</div>
   <button id="saveButton" disabled>CSV opslaan</button>
@@ -47,12 +47,11 @@
   <!-- controller -->
   <a-entity id="rightController" laser-controls="hand:right"></a-entity>
 
-  <!-- virtuele arm -->
-  <a-sphere id="shoulderVisual" radius="0.055" color="#b87956" visible="false"></a-sphere>
-  <a-cylinder id="upperArm" radius="0.055" height="0.30" color="#d79a73" visible="false"></a-cylinder>
-  <a-sphere id="elbowVisual" radius="0.05" color="#c98a64" visible="false"></a-sphere>
-  <a-cylinder id="foreArm" radius="0.05" height="0.28" color="#dea47b" visible="false"></a-cylinder>
-  <a-sphere id="vrHand" radius="0.075" color="#c88b62" visible="false"></a-sphere>
+  <!-- virtuele arm: eerst bewust simpel en robuust.
+       Eén doorlopende arm van opgeslagen schouderpunt naar visuele hand. -->
+  <a-sphere id="shoulderVisual" radius="0.07" color="#8f5f45" visible="false"></a-sphere>
+  <a-cylinder id="virtualArm" radius="0.065" height="1" color="#d79a73" visible="false"></a-cylinder>
+  <a-sphere id="vrHand" radius="0.085" color="#c88b62" visible="false"></a-sphere>
 
   <!-- gedragen bord -->
   <a-entity id="carriedPlate" visible="false">
@@ -84,9 +83,7 @@
   const placedPlates = document.querySelector('#placedPlates');
 
   const shoulderVisual = document.querySelector('#shoulderVisual');
-  const upperArm = document.querySelector('#upperArm');
-  const elbowVisual = document.querySelector('#elbowVisual');
-  const foreArm = document.querySelector('#foreArm');
+  const virtualArm = document.querySelector('#virtualArm');
   const vrHand = document.querySelector('#vrHand');
 
   const cfg = {
@@ -99,9 +96,7 @@
       { until: 100, gain: 0.80 },
       { until: 120, gain: 0.75 }
     ],
-    shelfOffsetFromShoulderY: -0.05,
-    upperArmLength: 0.31,
-    foreArmLength: 0.29
+    shelfOffsetFromShoulderY: -0.05
   };
 
   let phase = 'CALIBRATE_SHOULDER';
@@ -147,72 +142,40 @@
     return cfg.gainSchedule[cfg.gainSchedule.length - 1].gain;
   }
 
-  function setCylinderBetween(el, a, b) {
-    const av = new THREE.Vector3(a.x, a.y, a.z);
-    const bv = new THREE.Vector3(b.x, b.y, b.z);
-    const dir = new THREE.Vector3().subVectors(bv, av);
-    const len = dir.length();
-
-    if (len < 0.001) {
-      el.setAttribute('visible', false);
-      return;
-    }
-
-    const mid = new THREE.Vector3().addVectors(av, bv).multiplyScalar(0.5);
-    el.object3D.position.copy(mid);
-    el.object3D.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0,1,0),
-      dir.clone().normalize()
-    );
-    el.setAttribute('height', len);
-    el.setAttribute('visible', true);
-  }
-
   function updateVirtualArm(hand) {
     if (!shoulder || !hand) return;
 
     const s = new THREE.Vector3(shoulder.x, shoulder.y, shoulder.z);
     const h = new THREE.Vector3(hand.x, hand.y, hand.z);
-    const sh = new THREE.Vector3().subVectors(h, s);
-    let dist = sh.length();
+    const dir = new THREE.Vector3().subVectors(h, s);
+    const len = dir.length();
 
-    if (dist < 0.03) return;
-
-    const L1 = cfg.upperArmLength;
-    const L2 = cfg.foreArmLength;
-    const maxReach = L1 + L2 - 0.01;
-
-    let dir = sh.clone().normalize();
-    let handForIK = h.clone();
-
-    if (dist > maxReach) {
-      dist = maxReach;
-      handForIK = s.clone().add(dir.clone().multiplyScalar(maxReach));
+    if (len < 0.02) {
+      virtualArm.setAttribute('visible', false);
+      shoulderVisual.setAttribute('visible', true);
+      vrHand.setAttribute('visible', true);
+      shoulderVisual.object3D.position.copy(s);
+      vrHand.object3D.position.copy(h);
+      return;
     }
 
-    const proj = (L1*L1 - L2*L2 + dist*dist) / (2*dist);
-    const perp = Math.sqrt(Math.max(0, L1*L1 - proj*proj));
-
-    // stabiele buigrichting voor rechterarm
-    let bend = new THREE.Vector3(0.35, -0.75, 0.20);
-    bend.sub(dir.clone().multiplyScalar(bend.dot(dir)));
-    if (bend.length() < 0.001) bend = new THREE.Vector3(1,-1,0);
-    bend.normalize();
-
-    const elbow = s.clone()
-      .add(dir.clone().multiplyScalar(proj))
-      .add(bend.multiplyScalar(perp));
+    const mid = new THREE.Vector3().addVectors(s, h).multiplyScalar(0.5);
 
     shoulderVisual.object3D.position.copy(s);
-    elbowVisual.object3D.position.copy(elbow);
-    vrHand.object3D.position.copy(handForIK);
+    vrHand.object3D.position.copy(h);
+
+    virtualArm.object3D.position.copy(mid);
+    virtualArm.object3D.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      dir.clone().normalize()
+    );
+
+    // De cilinder is standaard 1 meter lang. Schaal alleen de lengte-as.
+    virtualArm.object3D.scale.set(1, len, 1);
 
     shoulderVisual.setAttribute('visible', true);
-    elbowVisual.setAttribute('visible', true);
+    virtualArm.setAttribute('visible', true);
     vrHand.setAttribute('visible', true);
-
-    setCylinderBetween(upperArm, s, elbow);
-    setCylinderBetween(foreArm, elbow, handForIK);
   }
 
   function log(event, controller, visualY, gain) {
@@ -390,7 +353,7 @@
         }
 
         detail.textContent =
-          't=' + elapsed.toFixed(1) +
+          'v2 | t=' + elapsed.toFixed(1) +
           ' s | gain=' + gain.toFixed(2) +
           ' | borden=' + placedCount;
 
