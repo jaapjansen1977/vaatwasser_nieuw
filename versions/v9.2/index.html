@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Vaatwasser VR</title>
+  <script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
+  <style>
+    body { margin:0; font-family:Arial,sans-serif; background:#17222b; color:#fff; }
+    #panel {
+      position:fixed; z-index:9999; top:16px; left:16px; width:410px;
+      padding:14px; border-radius:10px; background:rgba(8,14,18,.88);
+    }
+    #panel button { margin-top:8px; padding:9px 13px; border:0; border-radius:8px; }
+    #version { opacity:.65; font-size:12px; }
+  </style>
+</head>
+<body>
+
+<div id="panel">
+  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v9.2</span></div>
+  <div id="status">Start VR. Daarna: schouder kalibreren.</div>
+  <div id="detail">Nog geen schouderpunt opgeslagen.</div>
+  <button id="saveButton" disabled>CSV opslaan</button>
+</div>
+
+<div id="plotPanel" style="
+  display:none;
+  position:fixed;
+  z-index:10000;
+  top:20px;
+  right:20px;
+  width:700px;
+  max-width:90vw;
+  background:rgba(255,255,255,0.96);
+  color:#111;
+  padding:16px;
+  border-radius:12px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.25);
+">
+  <div style="font-weight:bold; margin-bottom:8px;">Experimentresultaat v9.2</div>
+  <div id="plotSummary" style="margin-bottom:10px; font-size:14px;">Samenvatting...</div>
+  <canvas id="resultCanvas" width="640" height="360"
+          style="width:100%; height:auto; border:1px solid #ccc; background:#fff;"></canvas>
+</div>
+
+<a-scene id="scene" dishwasher-runtime background="color:#dfe7eb">
+  <a-entity light="type:ambient; intensity:0.95; color:#ffffff"></a-entity>
+  <a-entity light="type:directional; intensity:0.55; color:#ffffff" position="-2 5 2"></a-entity>
+
+  <a-plane position="0 1.6 -3.4" width="7" height="3.8" color="#e8e2d9"></a-plane>
+  <a-plane position="0 0 -2.5" rotation="-90 0 0" width="7" height="7" color="#b9b5ad"></a-plane>
+
+  <!-- vaatwasser -->
+  <a-box id="dishwasherBody" position="0 0.48 -1.55" width="1.25" height="0.9" depth="0.65" color="#6f7b82"></a-box>
+  <a-box id="dishwasherDoor" position="0 0.18 -1.05" rotation="-65 0 0" width="1.25" height="0.06" depth="0.9" color="#aab3b8"></a-box>
+
+  <a-entity id="waitingPlate" position="0 0.58 -1.12">
+    <a-cylinder radius="0.18" height="0.03" rotation="90 0 0" color="#fffaf0"></a-cylinder>
+    <a-torus radius="0.18" radius-tubular="0.012" rotation="90 0 0" color="#d8c47b"></a-torus>
+  </a-entity>
+
+  <!-- plank: hoogte wordt na schouderkalibratie aangepast -->
+  <a-box id="shelf" position="0 1.55 -1.50" width="2.2" height="0.08" depth="0.45" color="#9b7657"></a-box>
+  <a-entity id="placedPlates" position="0 1.61 -1.30"></a-entity>
+  <a-entity id="placementTarget" position="0 1.65 -1.30"></a-entity>
+
+  <!-- controller -->
+  <a-entity id="rightController" laser-controls="hand:right"></a-entity>
+
+  <!-- virtuele arm wordt in v3 rechtstreeks als THREE.js-mesh toegevoegd.
+       Dit omzeilt mogelijke A-Frame visibility/primitive-problemen in Quest WebXR. -->
+
+  <!-- gedragen bord -->
+  <a-entity id="carriedPlate" visible="false">
+    <a-cylinder radius="0.19" height="0.035" rotation="90 0 0" color="#fff6d5"></a-cylinder>
+    <a-torus radius="0.19" radius-tubular="0.012" rotation="90 0 0" color="#d6b85f"></a-torus>
+  </a-entity>
+
+  <a-camera id="camera" position="0 1.6 0">
+    <a-entity position="0 -0.18 -1.35">
+      <a-plane width="1.40" height="0.44" color="#10212a" opacity="0.80"></a-plane>
+      <a-text id="hud" value="Start VR" align="center" width="1.20" position="0 0 0.01" color="#ffffff"></a-text>
+    </a-entity>
+  </a-camera>
+</a-scene>
+
+<script>
+AFRAME.registerComponent('dishwasher-runtime', {
+  tick: function () {
+    if (window.updateDishwasherFrame) {
+      window.updateDishwasherFrame();
+    }
+  }
+});
+
+(function () {
+  const scene = document.querySelector('#scene');
+  const rightController = document.querySelector('#rightController');
+
+  const status = document.querySelector('#status');
+  const detail = document.querySelector('#detail');
+  const hud = document.querySelector('#hud');
+  const saveButton = document.querySelector('#saveButton');
+  const plotPanel = document.querySelector('#plotPanel');
+  const plotSummary = document.querySelector('#plotSummary');
+  const resultCanvas = document.querySelector('#resultCanvas');
+
+  const dishwasherBody = document.querySelector('#dishwasherBody');
+  const dishwasherDoor = document.querySelector('#dishwasherDoor');
+  const waitingPlate = document.querySelector('#waitingPlate');
+  const carriedPlate = document.querySelector('#carriedPlate');
+  const shelf = document.querySelector('#shelf');
+  const placedPlates = document.querySelector('#placedPlates');
+  const placementTarget = document.querySelector('#placementTarget');
+
+  let shoulderMesh = null;
+  let handMesh = null;
+
+  const cfg = {
+    duration: 120,
+    gainSchedule: [
+      { until: 20, gain: 1.00 },
+      { until: 40, gain: 0.95 },
+      { until: 60, gain: 0.90 },
+      { until: 80, gain: 0.85 },
+      { until: 100, gain: 0.80 },
+      { until: 120, gain: 0.75 }
+    ],
+    shelfOffsetFromShoulderY: -0.05,
+
+    // Afstand van de taakobjecten voor de gebruiker.
+    // Minder negatief = dichterbij. -0.85 is ~27 cm dichterbij dan voorheen.
+    taskZ: -0.85,
+
+    pickupRadius: 0.20,
+
+    // Plaatsen gebeurt niet meer rond één klein punt, maar boven de hele plank.
+    shelfHalfWidth: 1.15,
+    shelfYBelow: 0.12,
+    shelfYAbove: 0.30,
+    shelfZHalfDepth: 0.38
+  };
+
+  let phase = 'CALIBRATE_SHOULDER';
+  let shoulder = null;
+  let startHand = null;
+  let startTime = 0;
+  let carrying = false;
+  let waitingRespawn = false;
+  let placedCount = 0;
+  let plateNumber = 1;
+  let lastFrameLog = 0;
+  let autoSaved = false;
+
+  const data = [];
+  const controllerWorld = new THREE.Vector3();
+  const pickupWorld = new THREE.Vector3();
+  const placeWorld = new THREE.Vector3();
+  const shelfWorld = new THREE.Vector3();
+  const armDots = [];
+
+  function inShelfPlacementZone(controller, visualY) {
+    scene.object3D.updateMatrixWorld(true);
+    shelf.object3D.getWorldPosition(shelfWorld);
+
+    const dx = controller.x - shelfWorld.x;
+    const dy = visualY - shelfWorld.y;
+    const dz = controller.z - shelfWorld.z;
+
+    const inside =
+      Math.abs(dx) <= cfg.shelfHalfWidth &&
+      dy >= -cfg.shelfYBelow &&
+      dy <= cfg.shelfYAbove &&
+      Math.abs(dz) <= cfg.shelfZHalfDepth;
+
+    return { inside, dx, dy, dz };
+  }
+
+  function distanceToEntity(controller, entity, tempVector) {
+    scene.object3D.updateMatrixWorld(true);
+    entity.object3D.getWorldPosition(tempVector);
+    const dx = controller.x - tempVector.x;
+    const dy = controller.y - tempVector.y;
+    const dz = controller.z - tempVector.z;
+    return Math.sqrt(dx*dx + dy*dy + dz*dz);
+  }
+
+  function setHud(text) {
+    hud.setAttribute('value', text);
+    status.textContent = text.replace(/\n/g, ' ');
+  }
+
+  function getController() {
+    if (!scene.is('vr-mode')) return null;
+    if (!rightController || !rightController.object3D) return null;
+    rightController.object3D.getWorldPosition(controllerWorld);
+
+    if (!Number.isFinite(controllerWorld.x) ||
+        !Number.isFinite(controllerWorld.y) ||
+        !Number.isFinite(controllerWorld.z)) {
+      return null;
+    }
+
+    return {
+      x: controllerWorld.x,
+      y: controllerWorld.y,
+      z: controllerWorld.z
+    };
+  }
+
+  function getGain(t) {
+    for (const s of cfg.gainSchedule) {
+      if (t < s.until) return s.gain;
+    }
+    return cfg.gainSchedule[cfg.gainSchedule.length - 1].gain;
+  }
+
+  function initVirtualArmMeshes() {
+    if (shoulderMesh) return;
+
+    const alwaysOnTop = (color) => new THREE.MeshBasicMaterial({
+      color,
+      depthTest: false,
+      depthWrite: false
+    });
+
+    shoulderMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.075, 18, 14),
+      alwaysOnTop(0x8f5f45)
+    );
+    shoulderMesh.renderOrder = 999;
+    shoulderMesh.visible = false;
+    scene.object3D.add(shoulderMesh);
+
+    handMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.095, 18, 14),
+      alwaysOnTop(0xffd34d)
+    );
+    handMesh.renderOrder = 999;
+    handMesh.visible = false;
+    scene.object3D.add(handMesh);
+
+    // Robuuste "arm": reeks bollen tussen schouder en hand.
+    // Geen rotatie of cilinders nodig; dit werkt betrouwbaar in Quest WebXR.
+    const dotGeo = new THREE.SphereGeometry(0.055, 14, 10);
+    const dotMat = alwaysOnTop(0xff4f3a);
+
+    for (let i = 0; i < 12; i++) {
+      const dot = new THREE.Mesh(dotGeo, dotMat);
+      dot.renderOrder = 999;
+      dot.visible = false;
+      scene.object3D.add(dot);
+      armDots.push(dot);
+    }
+  }
+
+  function updateVirtualArm(hand) {
+    if (!shoulder || !hand) return;
+    initVirtualArmMeshes();
+
+    const s = new THREE.Vector3(shoulder.x, shoulder.y, shoulder.z);
+    const h = new THREE.Vector3(hand.x, hand.y, hand.z);
+
+    shoulderMesh.position.copy(s);
+    handMesh.position.copy(h);
+    shoulderMesh.visible = true;
+    handMesh.visible = true;
+
+    for (let i = 0; i < armDots.length; i++) {
+      const t = (i + 1) / (armDots.length + 1);
+      armDots[i].position.lerpVectors(s, h, t);
+      armDots[i].visible = true;
+    }
+  }
+
+  function log(event, controller, visualY, gain) {
+    data.push({
+      event,
+      time: phase === 'RUNNING' ? (performance.now() - startTime)/1000 : 0,
+      gain,
+      plate_number: plateNumber,
+      carrying,
+      shoulder_x: shoulder ? shoulder.x : '',
+      shoulder_y: shoulder ? shoulder.y : '',
+      shoulder_z: shoulder ? shoulder.z : '',
+      controller_x: controller ? controller.x : '',
+      controller_y: controller ? controller.y : '',
+      controller_z: controller ? controller.z : '',
+      visual_y: visualY,
+      placement_y_basis: 'visual_y'
+    });
+  }
+
+  function getFrameSeries() {
+    return data.filter(row =>
+      row.event === 'frame' &&
+      row.controller_y !== '' &&
+      row.visual_y !== ''
+    ).map(row => ({
+      t: Number(row.time),
+      realY: Number(row.controller_y),
+      visualY: Number(row.visual_y)
+    }));
+  }
+
+  function drawResultPlot() {
+    const series = getFrameSeries();
+    if (!series.length) return;
+
+    plotPanel.style.display = 'block';
+
+    const canvas = resultCanvas;
+    const ctx = canvas.getContext('2d');
+
+    const W = canvas.width;
+    const H = canvas.height;
+
+    ctx.clearRect(0, 0, W, H);
+
+    const margin = { left: 60, right: 20, top: 20, bottom: 45 };
+    const plotW = W - margin.left - margin.right;
+    const plotH = H - margin.top - margin.bottom;
+
+    const realVals = series.map(p => p.realY);
+    const visualVals = series.map(p => p.visualY);
+
+    const minT = 0;
+    const maxT = cfg.duration;
+
+    const minY = Math.min(...realVals, ...visualVals);
+    const maxY = Math.max(...realVals, ...visualVals);
+
+    const padY = Math.max(0.05, (maxY - minY) * 0.08);
+    const y0 = minY - padY;
+    const y1 = maxY + padY;
+
+    function xScale(t) {
+      return margin.left + ((t - minT) / (maxT - minT)) * plotW;
+    }
+
+    function yScale(y) {
+      return margin.top + plotH - ((y - y0) / (y1 - y0)) * plotH;
+    }
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = '#e6e6e6';
+    ctx.lineWidth = 1;
+    for (let t = 0; t <= cfg.duration; t += 20) {
+      const x = xScale(t);
+      ctx.beginPath();
+      ctx.moveTo(x, margin.top);
+      ctx.lineTo(x, margin.top + plotH);
+      ctx.stroke();
+
+      ctx.fillStyle = '#444';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(String(t), x, H - 20);
+    }
+
+    const yTicks = 5;
+    for (let i = 0; i <= yTicks; i++) {
+      const frac = i / yTicks;
+      const yVal = y0 + frac * (y1 - y0);
+      const y = yScale(yVal);
+
+      ctx.strokeStyle = '#e6e6e6';
+      ctx.beginPath();
+      ctx.moveTo(margin.left, y);
+      ctx.lineTo(margin.left + plotW, y);
+      ctx.stroke();
+
+      ctx.fillStyle = '#444';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'right';
+      ctx.fillText(yVal.toFixed(2), margin.left - 8, y + 4);
+    }
+
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(margin.left, margin.top);
+    ctx.lineTo(margin.left, margin.top + plotH);
+    ctx.lineTo(margin.left + plotW, margin.top + plotH);
+    ctx.stroke();
+
+    ctx.fillStyle = '#111';
+    ctx.font = '13px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Tijd (s)', margin.left + plotW / 2, H - 5);
+
+    ctx.save();
+    ctx.translate(18, margin.top + plotH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('Hoogte (m)', 0, 0);
+    ctx.restore();
+
+    // Werkelijke hoogte
+    ctx.strokeStyle = '#1f77b4';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    series.forEach((p, i) => {
+      const x = xScale(p.t);
+      const y = yScale(p.realY);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Virtuele hoogte
+    ctx.strokeStyle = '#ff7f0e';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    series.forEach((p, i) => {
+      const x = xScale(p.t);
+      const y = yScale(p.visualY);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Legenda
+    ctx.fillStyle = '#1f77b4';
+    ctx.fillRect(W - 190, 25, 16, 4);
+    ctx.fillStyle = '#111';
+    ctx.textAlign = 'left';
+    ctx.fillText('Werkelijke hoogte', W - 168, 32);
+
+    ctx.fillStyle = '#ff7f0e';
+    ctx.fillRect(W - 190, 48, 16, 4);
+    ctx.fillStyle = '#111';
+    ctx.fillText('Virtuele hoogte', W - 168, 55);
+
+    const maxReal = Math.max(...realVals);
+    const maxVisual = Math.max(...visualVals);
+
+    plotSummary.textContent =
+      'Max werkelijke hoogte: ' + maxReal.toFixed(3) + ' m | ' +
+      'Max virtuele hoogte: ' + maxVisual.toFixed(3) + ' m';
+  }
+
+  function buildCSV() {
+    if (!data.length) return '';
+    const headers = Object.keys(data[0]);
+    const lines = [headers.join(',')];
+    for (const row of data) {
+      lines.push(headers.map(h => row[h] ?? '').join(','));
+    }
+    return lines.join('\n');
+  }
+
+  function saveCSV() {
+    const csv = buildCSV();
+    if (!csv) return;
+
+    // Bewaar ook een lokale browser-backup. Dit blijft beschikbaar als
+    // de automatische download door de Quest-browser wordt geblokkeerd.
+    try {
+      localStorage.setItem('vaatwasser_last_csv', csv);
+      localStorage.setItem('vaatwasser_last_saved_at', new Date().toISOString());
+    } catch (e) {
+      console.warn('Lokale backup kon niet worden opgeslagen', e);
+    }
+
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'vaatwasser_vr_' + new Date().toISOString().replace(/[:.]/g,'-') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  function calibrateShoulder(c) {
+    shoulder = {...c};
+
+    const shelfY = shoulder.y + cfg.shelfOffsetFromShoulderY;
+
+    // Zet de hele taak dichter bij de gebruiker.
+    // taskZ is de positie van het bord; overige objecten houden hun relatieve diepte.
+    const plateZ = cfg.taskZ;
+    const doorZ = plateZ + 0.07;
+    const bodyZ = plateZ - 0.43;
+    const shelfZ = plateZ - 0.38;
+    const placedZ = plateZ - 0.18;
+
+    dishwasherBody.setAttribute('position', '0 0.48 ' + bodyZ.toFixed(3));
+    dishwasherDoor.setAttribute('position', '0 0.18 ' + doorZ.toFixed(3));
+    waitingPlate.setAttribute('position', '0 0.58 ' + plateZ.toFixed(3));
+
+    shelf.setAttribute('position', '0 ' + shelfY.toFixed(3) + ' ' + shelfZ.toFixed(3));
+    placedPlates.setAttribute('position', '0 ' + (shelfY + 0.06).toFixed(3) + ' ' + placedZ.toFixed(3));
+    placementTarget.setAttribute('position', '0 ' + (shelfY + 0.10).toFixed(3) + ' ' + placedZ.toFixed(3));
+
+    phase = 'WAIT_START';
+    initVirtualArmMeshes();
+    shoulderMesh.position.set(shoulder.x, shoulder.y, shoulder.z);
+    shoulderMesh.visible = true;
+    log('shoulder_calibration', c, '', 1);
+
+    detail.textContent =
+      'Schouder y=' + shoulder.y.toFixed(3) +
+      ' | plank y=' + shelfY.toFixed(3);
+
+    setHud(
+      'Schouder opgeslagen.\n' +
+      'Breng de hand naar een comfortabele startpositie\n' +
+      'en druk opnieuw op trigger.'
+    );
+  }
+
+  function start(c) {
+    startHand = {...c};
+    startTime = performance.now();
+    lastFrameLog = startTime;
+    autoSaved = false;
+    phase = 'RUNNING';
+    carrying = false;
+    waitingRespawn = false;
+    placedCount = 0;
+    plateNumber = 1;
+
+    waitingPlate.setAttribute('visible', true);
+    carriedPlate.setAttribute('visible', false);
+
+    log('start', c, c.y, 1);
+
+    setHud(
+      'Test gestart.\n' +
+      'Raak het bord echt aan en druk trigger.\n' +
+      'Raak daarna de plank aan en druk opnieuw.'
+    );
+  }
+
+  function pickup(c, visualY, gain) {
+    carrying = true;
+    waitingPlate.setAttribute('visible', false);
+
+    carriedPlate.object3D.position.set(c.x, visualY - 0.02, c.z - 0.14);
+    carriedPlate.setAttribute('visible', true);
+
+    log('pickup', c, visualY, gain);
+    setHud('Bord gepakt.\nBreng het naar de plank en trigger opnieuw.');
+  }
+
+  function place(c, visualY, gain) {
+    carrying = false;
+    carriedPlate.setAttribute('visible', false);
+
+    const p = document.createElement('a-cylinder');
+    p.setAttribute('radius', 0.16);
+    p.setAttribute('height', 0.025);
+    p.setAttribute('rotation', '90 0 0');
+    p.setAttribute('color', '#fffaf0');
+    p.setAttribute('position', ((placedCount % 6 - 2.5) * 0.12) + ' 0.02 0');
+    placedPlates.appendChild(p);
+
+    placedCount++;
+    log('place', c, visualY, gain);
+
+    plateNumber++;
+    waitingRespawn = true;
+    setHud('Bord geplaatst.\nNieuw bord verschijnt...');
+
+    setTimeout(() => {
+      waitingPlate.setAttribute('visible', true);
+      waitingRespawn = false;
+      setHud('Raak het nieuwe bord aan en druk trigger.');
+    }, 450);
+  }
+
+  rightController.addEventListener('controllerconnected', function () {
+    // Houd tracking en trigger-events actief, maar verberg de fysieke
+    // controller/laser zodat alleen de gemanipuleerde virtuele hand zichtbaar is.
+    rightController.setAttribute('visible', false);
+  });
+
+  rightController.addEventListener('triggerdown', function () {
+    const c = getController();
+    if (!c) return;
+
+    if (phase === 'CALIBRATE_SHOULDER') {
+      calibrateShoulder(c);
+      return;
+    }
+
+    if (phase === 'WAIT_START') {
+      start(c);
+      return;
+    }
+
+    if (phase === 'RUNNING') {
+      const elapsed = (performance.now() - startTime) / 1000;
+      const gain = getGain(elapsed);
+      const visualY = startHand.y + gain * (c.y - startHand.y);
+
+      if (!carrying && !waitingRespawn) {
+        const dPickup = distanceToEntity(c, waitingPlate, pickupWorld);
+
+        if (dPickup <= cfg.pickupRadius) {
+          pickup(c, visualY, gain);
+        } else {
+          setHud(
+            'Te ver van het bord.\n' +
+            'Afstand ' + Math.round(dPickup * 100) + ' cm.\n' +
+            'Raak het bord aan en druk opnieuw.'
+          );
+        }
+      } else if (carrying) {
+        const zone = inShelfPlacementZone(c, visualY);
+
+        if (zone.inside) {
+          place(c, visualY, gain);
+        } else {
+          setHud(
+            'Virtuele hand nog niet bij de plank.\n' +
+            'dX ' + Math.round(zone.dx * 100) + ' cm  ' +
+            'VR dY ' + Math.round(zone.dy * 100) + ' cm  ' +
+            'dZ ' + Math.round(zone.dz * 100) + ' cm\n' +
+            'Hef je arm verder tot de virtuele hand de plank bereikt.'
+          );
+        }
+      }
+    }
+  });
+
+  scene.addEventListener('loaded', () => {
+    initVirtualArmMeshes();
+  });
+
+  scene.addEventListener('enter-vr', () => {
+    setHud(
+      'Kalibratie:\n' +
+      'houd de rechter controller tegen je rechterschouder\n' +
+      'en druk op trigger.'
+    );
+  });
+
+  saveButton.addEventListener('click', saveCSV);
+
+  window.updateDishwasherFrame = function () {
+    const c = getController();
+    if (!c || !shoulder) return;
+
+    let visualHand = {x:c.x, y:c.y, z:c.z};
+    let gain = 1.00;
+    let elapsed = 0;
+
+    if (phase === 'RUNNING') {
+      const now = performance.now();
+      elapsed = (now - startTime) / 1000;
+
+      if (elapsed >= cfg.duration) {
+        phase = 'FINISHED';
+        saveButton.disabled = false;
+
+        if (!autoSaved) {
+          autoSaved = true;
+          saveCSV();
+        }
+
+        drawResultPlot();
+
+        setHud(
+          'Klaar. CSV is automatisch opgeslagen/gedownload.\n' +
+          'Verlaat VR om de grafiek met werkelijke en virtuele hoogte te bekijken.'
+        );
+        return;
+      }
+
+      gain = getGain(elapsed);
+
+      // Gain geldt uitsluitend voor de verticale UITSLAG t.o.v. de
+      // opgeslagen startpositie.
+      visualHand.y = startHand.y + gain * (c.y - startHand.y);
+
+      if (carrying) {
+        carriedPlate.object3D.position.set(
+          c.x,
+          visualHand.y - 0.02,
+          c.z - 0.14
+        );
+      }
+
+      const realDelta = c.y - startHand.y;
+      const visualDelta = visualHand.y - startHand.y;
+
+      detail.textContent =
+        'v9.2 | t=' + elapsed.toFixed(1) +
+        ' | gain=' + gain.toFixed(2) +
+        ' | real ΔY=' + realDelta.toFixed(3) +
+        ' | vis ΔY=' + visualDelta.toFixed(3);
+
+      if (now - lastFrameLog >= 50) {
+        log('frame', c, visualHand.y, gain);
+        lastFrameLog = now;
+      }
+    }
+
+    updateVirtualArm(visualHand);
+
+    // Ook in de VR-HUD tonen we de gain en de twee verticale uitslagen.
+    if (phase === 'RUNNING') {
+      const realDelta = c.y - startHand.y;
+      const visualDelta = visualHand.y - startHand.y;
+      setHud(
+        'v9.2  Gain ' + gain.toFixed(2) + '\n' +
+        'Real dY ' + realDelta.toFixed(2) + ' m   Visual dY ' + visualDelta.toFixed(2) + ' m\n' +
+        (carrying ? 'Trigger = bord loslaten' : 'Trigger = bord pakken')
+      );
+    }
+  };
+
+})();
+</script>
+
+</body>
+</html>
