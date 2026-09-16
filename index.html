@@ -18,7 +18,7 @@
 <body>
 
 <div id="panel">
-  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v6</span></div>
+  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v7</span></div>
   <div id="status">Start VR. Daarna: schouder kalibreren.</div>
   <div id="detail">Nog geen schouderpunt opgeslagen.</div>
   <button id="saveButton" disabled>CSV opslaan</button>
@@ -43,6 +43,7 @@
   <!-- plank: hoogte wordt na schouderkalibratie aangepast -->
   <a-box id="shelf" position="0 1.55 -1.50" width="2.2" height="0.08" depth="0.45" color="#9b7657"></a-box>
   <a-entity id="placedPlates" position="0 1.61 -1.30"></a-entity>
+  <a-entity id="placementTarget" position="0 1.65 -1.30"></a-entity>
 
   <!-- controller -->
   <a-entity id="rightController" laser-controls="hand:right"></a-entity>
@@ -86,6 +87,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
   const carriedPlate = document.querySelector('#carriedPlate');
   const shelf = document.querySelector('#shelf');
   const placedPlates = document.querySelector('#placedPlates');
+  const placementTarget = document.querySelector('#placementTarget');
 
   let shoulderMesh = null;
   let handMesh = null;
@@ -100,7 +102,9 @@ AFRAME.registerComponent('dishwasher-runtime', {
       { until: 100, gain: 0.80 },
       { until: 120, gain: 0.75 }
     ],
-    shelfOffsetFromShoulderY: -0.05
+    shelfOffsetFromShoulderY: -0.05,
+    pickupRadius: 0.20,
+    placeRadius: 0.25
   };
 
   let phase = 'CALIBRATE_SHOULDER';
@@ -116,7 +120,18 @@ AFRAME.registerComponent('dishwasher-runtime', {
 
   const data = [];
   const controllerWorld = new THREE.Vector3();
+  const pickupWorld = new THREE.Vector3();
+  const placeWorld = new THREE.Vector3();
   const armDots = [];
+
+  function distanceToEntity(controller, entity, tempVector) {
+    scene.object3D.updateMatrixWorld(true);
+    entity.object3D.getWorldPosition(tempVector);
+    const dx = controller.x - tempVector.x;
+    const dy = controller.y - tempVector.y;
+    const dz = controller.z - tempVector.z;
+    return Math.sqrt(dx*dx + dy*dy + dz*dz);
+  }
 
   function setHud(text) {
     hud.setAttribute('value', text);
@@ -264,6 +279,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
     const shelfY = shoulder.y + cfg.shelfOffsetFromShoulderY;
     shelf.setAttribute('position', '0 ' + shelfY.toFixed(3) + ' -1.50');
     placedPlates.setAttribute('position', '0 ' + (shelfY + 0.06).toFixed(3) + ' -1.30');
+    placementTarget.setAttribute('position', '0 ' + (shelfY + 0.10).toFixed(3) + ' -1.30');
 
     phase = 'WAIT_START';
     initVirtualArmMeshes();
@@ -300,8 +316,8 @@ AFRAME.registerComponent('dishwasher-runtime', {
 
     setHud(
       'Test gestart.\n' +
-      'Raak het bord aan en trigger = pakken.\n' +
-      'Bij de plank trigger = loslaten.'
+      'Raak het bord echt aan en druk trigger.\n' +
+      'Raak daarna de plank aan en druk opnieuw.'
     );
   }
 
@@ -367,8 +383,31 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const gain = getGain(elapsed);
       const visualY = startHand.y + gain * (c.y - startHand.y);
 
-      if (!carrying && !waitingRespawn) pickup(c, visualY, gain);
-      else if (carrying) place(c, visualY, gain);
+      if (!carrying && !waitingRespawn) {
+        const dPickup = distanceToEntity(c, waitingPlate, pickupWorld);
+
+        if (dPickup <= cfg.pickupRadius) {
+          pickup(c, visualY, gain);
+        } else {
+          setHud(
+            'Te ver van het bord.\n' +
+            'Afstand ' + Math.round(dPickup * 100) + ' cm.\n' +
+            'Raak het bord aan en druk opnieuw.'
+          );
+        }
+      } else if (carrying) {
+        const dPlace = distanceToEntity(c, placementTarget, placeWorld);
+
+        if (dPlace <= cfg.placeRadius) {
+          place(c, visualY, gain);
+        } else {
+          setHud(
+            'Te ver van de plank.\n' +
+            'Afstand ' + Math.round(dPlace * 100) + ' cm.\n' +
+            'Breng het bord naar de plank en druk opnieuw.'
+          );
+        }
+      }
     }
   });
 
@@ -432,7 +471,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const visualDelta = visualHand.y - startHand.y;
 
       detail.textContent =
-        'v6 | t=' + elapsed.toFixed(1) +
+        'v7 | t=' + elapsed.toFixed(1) +
         ' | gain=' + gain.toFixed(2) +
         ' | real ΔY=' + realDelta.toFixed(3) +
         ' | vis ΔY=' + visualDelta.toFixed(3);
@@ -450,7 +489,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const realDelta = c.y - startHand.y;
       const visualDelta = visualHand.y - startHand.y;
       setHud(
-        'v6  Gain ' + gain.toFixed(2) + '\n' +
+        'v7  Gain ' + gain.toFixed(2) + '\n' +
         'Real dY ' + realDelta.toFixed(2) + ' m   Visual dY ' + visualDelta.toFixed(2) + ' m\n' +
         (carrying ? 'Trigger = bord loslaten' : 'Trigger = bord pakken')
       );
