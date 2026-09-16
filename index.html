@@ -18,7 +18,7 @@
 <body>
 
 <div id="panel">
-  <div><strong>Vaatwasser VR</strong> <span id="version">dev v10.4</span></div>
+  <div><strong>Vaatwasser VR</strong> <span id="version">dev v10.5</span></div>
   <div id="status">Start VR. Daarna: schouder kalibreren.</div>
   <div id="detail">Nog geen schouderpunt opgeslagen.</div>
   <button id="saveButton" disabled>CSV opslaan</button>
@@ -46,7 +46,9 @@
   <a-entity id="placementTarget" position="0 1.65 -1.30"></a-entity>
 
   <!-- controller -->
-  <a-entity id="rightController" laser-controls="hand:right"></a-entity>
+  <a-entity id="rightController"
+           laser-controls="hand:right"
+           raycaster="objects: .clickable; far: 5"></a-entity>
 
   <!-- virtuele arm wordt in v3 rechtstreeks als THREE.js-mesh toegevoegd.
        Dit omzeilt mogelijke A-Frame visibility/primitive-problemen in Quest WebXR. -->
@@ -61,6 +63,19 @@
     <a-entity position="0 -0.18 -1.35">
       <a-plane width="1.40" height="0.44" color="#10212a" opacity="0.80"></a-plane>
       <a-text id="hud" value="Start VR" align="center" width="1.20" position="0 0 0.01" color="#ffffff"></a-text>
+    </a-entity>
+
+    <a-entity id="exitVRButton" visible="false" position="0 -0.58 -1.10">
+      <a-plane class="clickable"
+               width="0.78"
+               height="0.20"
+               color="#b93b3b"
+               opacity="0.96"></a-plane>
+      <a-text value="VR VERLATEN"
+              align="center"
+              width="0.72"
+              position="0 0 0.01"
+              color="#ffffff"></a-text>
     </a-entity>
   </a-camera>
 </a-scene>
@@ -83,6 +98,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
   const hud = document.querySelector('#hud');
   const saveButton = document.querySelector('#saveButton');
   const camera = document.querySelector('#camera');
+  const exitVRButton = document.querySelector('#exitVRButton');
 
   const dishwasherBody = document.querySelector('#dishwasherBody');
   const dishwasherDoor = document.querySelector('#dishwasherDoor');
@@ -488,7 +504,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       controller_y: controller ? controller.y : '',
       controller_z: controller ? controller.z : '',
       visual_y: visualY,
-      arm_model: '2-link-IK-v10.4',
+      arm_model: '2-link-IK-v10.5',
       placement_y_basis: 'visual_y'
     });
   }
@@ -501,6 +517,23 @@ AFRAME.registerComponent('dishwasher-runtime', {
       lines.push(headers.map(h => row[h] ?? '').join(','));
     }
     return lines.join('\n');
+  }
+
+  async function leaveVR() {
+    try {
+      const xrSession = scene.renderer && scene.renderer.xr
+        ? scene.renderer.xr.getSession()
+        : null;
+
+      if (xrSession) {
+        await xrSession.end();
+      } else if (scene.is('vr-mode')) {
+        scene.exitVR();
+      }
+    } catch (e) {
+      console.warn('VR verlaten via XR-session mislukte, probeer scene.exitVR()', e);
+      try { scene.exitVR(); } catch (_) {}
+    }
   }
 
   function saveCSV() {
@@ -727,6 +760,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
   });
 
   scene.addEventListener('enter-vr', () => {
+    exitVRButton.setAttribute('visible', false);
     setHud(
       'Kalibratie:\n' +
       'houd de rechter controller tegen je rechterschouder\n' +
@@ -735,6 +769,13 @@ AFRAME.registerComponent('dishwasher-runtime', {
   });
 
   saveButton.addEventListener('click', saveCSV);
+
+  exitVRButton.addEventListener('click', leaveVR);
+
+  // Robuuste Quest-fallback: B-knop op rechter controller verlaat VR na afloop.
+  rightController.addEventListener('bbuttondown', function () {
+    if (phase === 'FINISHED') leaveVR();
+  });
 
   window.updateDishwasherFrame = function () {
     const c = getController();
@@ -760,9 +801,12 @@ AFRAME.registerComponent('dishwasher-runtime', {
           saveCSV();
         }
 
+        exitVRButton.setAttribute('visible', true);
+
         setHud(
           'Klaar. CSV is automatisch opgeslagen/gedownload.\n' +
-          'Zo niet: verlaat VR en gebruik de knop CSV opslaan.'
+          'Richt op VR VERLATEN en druk trigger.\n' +
+          'Fallback: druk op B op de rechter controller.'
         );
         return;
       }
@@ -785,7 +829,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const visualDelta = visualHand.y - startHand.y;
 
       detail.textContent =
-        'v10.4 | t=' + elapsed.toFixed(1) +
+        'v10.5 | t=' + elapsed.toFixed(1) +
         ' | gain=' + gain.toFixed(2) +
         ' | real ΔY=' + realDelta.toFixed(3) +
         ' | vis ΔY=' + visualDelta.toFixed(3);
@@ -803,7 +847,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const realDelta = c.y - startHand.y;
       const visualDelta = visualHand.y - startHand.y;
       setHud(
-        'v10.4  Gain ' + gain.toFixed(2) + '\n' +
+        'v10.5  Gain ' + gain.toFixed(2) + '\n' +
         'Real dY ' + realDelta.toFixed(2) + ' m   Visual dY ' + visualDelta.toFixed(2) + ' m\n' +
         (carrying ? 'Trigger = bord loslaten' : 'Trigger = bord pakken')
       );
