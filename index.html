@@ -18,7 +18,7 @@
 <body>
 
 <div id="panel">
-  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v9</span></div>
+  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v9.1</span></div>
   <div id="status">Start VR. Daarna: schouder kalibreren.</div>
   <div id="detail">Nog geen schouderpunt opgeslagen.</div>
   <button id="saveButton" disabled>CSV opslaan</button>
@@ -137,12 +137,12 @@ AFRAME.registerComponent('dishwasher-runtime', {
   const shelfWorld = new THREE.Vector3();
   const armDots = [];
 
-  function inShelfPlacementZone(controller) {
+  function inShelfPlacementZone(controller, visualY) {
     scene.object3D.updateMatrixWorld(true);
     shelf.object3D.getWorldPosition(shelfWorld);
 
     const dx = controller.x - shelfWorld.x;
-    const dy = controller.y - shelfWorld.y;
+    const dy = visualY - shelfWorld.y;
     const dz = controller.z - shelfWorld.z;
 
     const inside =
@@ -264,7 +264,8 @@ AFRAME.registerComponent('dishwasher-runtime', {
       controller_x: controller ? controller.x : '',
       controller_y: controller ? controller.y : '',
       controller_z: controller ? controller.z : '',
-      visual_y: visualY
+      visual_y: visualY,
+      placement_y_basis: 'visual_y'
     });
   }
 
@@ -439,17 +440,17 @@ AFRAME.registerComponent('dishwasher-runtime', {
           );
         }
       } else if (carrying) {
-        const zone = inShelfPlacementZone(c);
+        const zone = inShelfPlacementZone(c, visualY);
 
         if (zone.inside) {
           place(c, visualY, gain);
         } else {
           setHud(
-            'Nog niet boven de plank.\n' +
+            'Virtuele hand nog niet bij de plank.\n' +
             'dX ' + Math.round(zone.dx * 100) + ' cm  ' +
-            'dY ' + Math.round(zone.dy * 100) + ' cm  ' +
+            'VR dY ' + Math.round(zone.dy * 100) + ' cm  ' +
             'dZ ' + Math.round(zone.dz * 100) + ' cm\n' +
-            'Breng je hand boven de plank en druk opnieuw.'
+            'Hef je arm verder tot de virtuele hand de plank bereikt.'
           );
         }
       }
@@ -516,7 +517,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const visualDelta = visualHand.y - startHand.y;
 
       detail.textContent =
-        'v9 | t=' + elapsed.toFixed(1) +
+        'v9.1 | t=' + elapsed.toFixed(1) +
         ' | gain=' + gain.toFixed(2) +
         ' | real ΔY=' + realDelta.toFixed(3) +
         ' | vis ΔY=' + visualDelta.toFixed(3);
@@ -534,7 +535,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const realDelta = c.y - startHand.y;
       const visualDelta = visualHand.y - startHand.y;
       setHud(
-        'v9  Gain ' + gain.toFixed(2) + '\n' +
+        'v9.1  Gain ' + gain.toFixed(2) + '\n' +
         'Real dY ' + realDelta.toFixed(2) + ' m   Visual dY ' + visualDelta.toFixed(2) + ' m\n' +
         (carrying ? 'Trigger = bord loslaten' : 'Trigger = bord pakken')
       );
