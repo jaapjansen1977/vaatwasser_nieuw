@@ -18,7 +18,7 @@
 <body>
 
 <div id="panel">
-  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v5</span></div>
+  <div><strong>Vaatwasser VR</strong> <span id="version">nieuw v6</span></div>
   <div id="status">Start VR. Daarna: schouder kalibreren.</div>
   <div id="detail">Nog geen schouderpunt opgeslagen.</div>
   <button id="saveButton" disabled>CSV opslaan</button>
@@ -112,6 +112,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
   let placedCount = 0;
   let plateNumber = 1;
   let lastFrameLog = 0;
+  let autoSaved = false;
 
   const data = [];
   const controllerWorld = new THREE.Vector3();
@@ -222,14 +223,30 @@ AFRAME.registerComponent('dishwasher-runtime', {
     });
   }
 
-  function saveCSV() {
-    if (!data.length) return;
+  function buildCSV() {
+    if (!data.length) return '';
     const headers = Object.keys(data[0]);
     const lines = [headers.join(',')];
     for (const row of data) {
       lines.push(headers.map(h => row[h] ?? '').join(','));
     }
-    const blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8'});
+    return lines.join('\n');
+  }
+
+  function saveCSV() {
+    const csv = buildCSV();
+    if (!csv) return;
+
+    // Bewaar ook een lokale browser-backup. Dit blijft beschikbaar als
+    // de automatische download door de Quest-browser wordt geblokkeerd.
+    try {
+      localStorage.setItem('vaatwasser_last_csv', csv);
+      localStorage.setItem('vaatwasser_last_saved_at', new Date().toISOString());
+    } catch (e) {
+      console.warn('Lokale backup kon niet worden opgeslagen', e);
+    }
+
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -237,7 +254,8 @@ AFRAME.registerComponent('dishwasher-runtime', {
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
 
   function calibrateShoulder(c) {
@@ -268,6 +286,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
     startHand = {...c};
     startTime = performance.now();
     lastFrameLog = startTime;
+    autoSaved = false;
     phase = 'RUNNING';
     carrying = false;
     waitingRespawn = false;
@@ -382,7 +401,16 @@ AFRAME.registerComponent('dishwasher-runtime', {
       if (elapsed >= cfg.duration) {
         phase = 'FINISHED';
         saveButton.disabled = false;
-        setHud('Klaar. Verlaat VR en sla CSV op.');
+
+        if (!autoSaved) {
+          autoSaved = true;
+          saveCSV();
+        }
+
+        setHud(
+          'Klaar. CSV is automatisch opgeslagen/gedownload.\n' +
+          'Zo niet: verlaat VR en gebruik de knop CSV opslaan.'
+        );
         return;
       }
 
@@ -404,7 +432,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const visualDelta = visualHand.y - startHand.y;
 
       detail.textContent =
-        'v5 | t=' + elapsed.toFixed(1) +
+        'v6 | t=' + elapsed.toFixed(1) +
         ' | gain=' + gain.toFixed(2) +
         ' | real ΔY=' + realDelta.toFixed(3) +
         ' | vis ΔY=' + visualDelta.toFixed(3);
@@ -422,7 +450,7 @@ AFRAME.registerComponent('dishwasher-runtime', {
       const realDelta = c.y - startHand.y;
       const visualDelta = visualHand.y - startHand.y;
       setHud(
-        'v5  Gain ' + gain.toFixed(2) + '\n' +
+        'v6  Gain ' + gain.toFixed(2) + '\n' +
         'Real dY ' + realDelta.toFixed(2) + ' m   Visual dY ' + visualDelta.toFixed(2) + ' m\n' +
         (carrying ? 'Trigger = bord loslaten' : 'Trigger = bord pakken')
       );
