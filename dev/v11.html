@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vaatwasser VR — v11</title>
+<script src="https://cdn.jsdelivr.net/npm/aframe@1.7.1/dist/aframe-master.min.js"></script>
+<style>
+body{margin:0;background:#17222b;color:#fff;font:16px system-ui,sans-serif}#panel{position:fixed;z-index:10;top:16px;left:16px;max-width:400px;padding:18px;border-radius:12px;background:#10212aee}h1{font-size:20px;margin:0 0 12px}p{line-height:1.45}button,select{font:inherit;padding:10px;border-radius:6px;border:1px solid #789;margin:4px 4px 4px 0}button{cursor:pointer}button:disabled{cursor:default;opacity:.5}#status{min-height:3em}#summary{white-space:pre-line}.a-enter-vr{z-index:20}body.in-vr #panel{display:none}small{color:#c6d5dc}#error{color:#ffbcab}
+</style>
+</head>
+<body>
+<section id="panel">
+<h1>Vaatwasser VR <small>v11 · 3D-keuken</small></h1>
+<label for="hand">Experimenteerarm:</label>
+<select id="hand"><option value="right">Rechts</option><option value="left">Links</option></select>
+<p>Sta centraal voor de vaatwasser. Gebruik beide controllers voor de kalibratie. Houd rondom voldoende vrije ruimte.</p>
+<p id="status" role="status">De keuken wordt geladen…</p>
+<p id="error" role="alert"></p>
+<button id="enter" disabled>Start VR</button><button id="reset" disabled>Nieuwe meting</button>
+<button id="save" disabled>CSV downloaden</button>
+<p id="summary"></p>
+<small>Kalibratie: 5 seconden met armen langs het lijf, daarna beide controllers tegen de schouders. De test duurt 2 minuten. Knijp tijdens de taak 2 seconden in de gripknop om af te breken.</small>
+</section>
+<a-scene id="scene" background="color:#d6dee4" renderer="antialias:true; colorManagement:true; highRefreshRate:true; foveationLevel:1" webxr="referenceSpaceType:local-floor; optionalFeatures:local-floor" kitchen-runtime>
+<a-entity light="type:hemisphere; color:#fff6e8; groundColor:#78858a; intensity:1.7"></a-entity>
+<a-entity light="type:directional; color:#fff8ee; intensity:1.7; castShadow:false" position="-2 3 1"></a-entity>
+<a-entity id="kitchen" gltf-model="url(../assets/kitchen-v11/kitchen.glb)"></a-entity>
+<a-entity id="left" laser-controls="hand:left" visible="false"></a-entity>
+<a-entity id="right" laser-controls="hand:right" visible="false"></a-entity>
+<a-camera id="head" position="0 1.6 0" wasd-controls-enabled="false">
+<a-entity position="0 0.22 -1.1">
+<a-plane hud-overlay="10000" width="1.12" height="0.29" color="#10212a" opacity="0.94"></a-plane>
+<a-text hud-overlay="10001" font="../assets/kitchen-v11/Roboto-msdf.json" font-image="../assets/kitchen-v11/Roboto-msdf.png" id="hud" value="De keuken wordt geladen..." align="center" width="1.03" wrap-count="48" position="0 0 0.008"></a-text>
+</a-entity>
+</a-camera>
+</a-scene>
+<script src="../assets/kitchen-v11/experiment.js"></script>
+</body>
+</html>

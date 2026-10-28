@@ -21,3 +21,7 @@ Alleen de verticale bewegingsuitslag van de virtuele hand/arm wordt aangepast:
 
 De virtuele arm begint bij het tijdens de kalibratie opgeslagen schouderpunt.
 De plankhoogte wordt ingesteld op 5 cm onder het schouderpunt.
+
+## Nieuwe ontwikkelversie v11
+
+Open [dev/v11.html](dev/v11.html) voor de 3D-keuken, keuze van experimenteerarm, bilaterale kalibratie en steeds hetzelfde voorste bord. De bestaande startpagina en v10 blijven beschikbaar. Zie [protocol, meetgedrag en validatie](dev/v11-README.md). De versie is in Chromium met gesimuleerde tracking getest; controle op de Quest zelf is nog nodig.
